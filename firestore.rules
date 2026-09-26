@@ -1,0 +1,40 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isValidId(id) {
+      return id is string && id.size() <= 128;
+    }
+
+    // Allow read and write for TeMa application documents
+    match /tema_data/{docId} {
+      allow read, write: if isValidId(docId);
+    }
+
+    match /departments/{departmentId} {
+      allow read, write: if isValidId(departmentId);
+    }
+
+    match /classes/{classId} {
+      allow read, write: if isValidId(classId);
+    }
+
+    match /industries/{industryId} {
+      allow read, write: if isValidId(industryId);
+    }
+
+    match /students/{studentId} {
+      allow read, write: if isValidId(studentId);
+    }
+
+    match /attendanceRecords/{recordId} {
+      allow read, write: if isValidId(recordId);
+    }
+
+    // Default fallback
+    match /{document=**} {
+      allow read, write: if true;
+    }
+  }
+}

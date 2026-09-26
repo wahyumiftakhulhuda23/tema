@@ -1,0 +1,131 @@
+{
+  "entities": {
+    "Department": {
+      "title": "Department",
+      "description": "Program Keahlian / Jurusan SMK",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "code": { "type": "string" }
+      },
+      "required": ["id", "name"]
+    },
+    "Class": {
+      "title": "Class",
+      "description": "Kelas Siswa SMK",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "departmentId": { "type": "string" },
+        "departmentName": { "type": "string" }
+      },
+      "required": ["id", "name"]
+    },
+    "Industry": {
+      "title": "Industry",
+      "description": "Mitra Dunia Usaha dan Dunia Industri (DUDI) / TeFa",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "concentration": { "type": "string" },
+        "address": { "type": "string" },
+        "owner": { "type": "string" },
+        "phone": { "type": "string" },
+        "activeDays": { "type": "array" },
+        "workHours": { "type": "string" },
+        "latitude": { "type": "number" },
+        "longitude": { "type": "number" },
+        "radiusMeter": { "type": "number" }
+      },
+      "required": ["id", "name"]
+    },
+    "Student": {
+      "title": "Student",
+      "description": "Data Siswa Peserta Magang / TeFa",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "nis": { "type": "string" },
+        "name": { "type": "string" },
+        "departmentId": { "type": "string" },
+        "departmentName": { "type": "string" },
+        "classId": { "type": "string" },
+        "className": { "type": "string" },
+        "industryId": { "type": "string" },
+        "industryName": { "type": "string" },
+        "phone": { "type": "string" },
+        "status": { "type": "string" }
+      },
+      "required": ["id", "name"]
+    },
+    "AttendanceRecord": {
+      "title": "AttendanceRecord",
+      "description": "Rekaman Presensi dan Jurnal Harian Siswa",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "industryId": { "type": "string" },
+        "industryName": { "type": "string" },
+        "departmentName": { "type": "string" },
+        "date": { "type": "string" },
+        "time": { "type": "string" },
+        "status": { "type": "string" },
+        "notes": { "type": "string" },
+        "journal": { "type": "string" },
+        "latitude": { "type": "number" },
+        "longitude": { "type": "number" },
+        "locationName": { "type": "string" },
+        "verified": { "type": "boolean" },
+        "accuracyMeter": { "type": "number" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "studentId", "date", "status"]
+    },
+    "TeMaGlobalState": {
+      "title": "TeMaGlobalState",
+      "description": "Dokumen State Terpusat Sistem TeMa",
+      "type": "object",
+      "properties": {
+        "departments": { "type": "array" },
+        "classes": { "type": "array" },
+        "industries": { "type": "array" },
+        "students": { "type": "array" },
+        "attendanceRecords": { "type": "array" },
+        "appSettings": { "type": "object" },
+        "lastUpdated": { "type": "string" }
+      }
+    }
+  },
+  "firestore": {
+    "/tema_data/{docId}": {
+      "schema": "TeMaGlobalState",
+      "description": "Dokumen sinkronisasi real-time aplikasi TeMa"
+    },
+    "/departments/{departmentId}": {
+      "schema": "Department",
+      "description": "Daftar Program Keahlian"
+    },
+    "/classes/{classId}": {
+      "schema": "Class",
+      "description": "Daftar Kelas"
+    },
+    "/industries/{industryId}": {
+      "schema": "Industry",
+      "description": "Daftar Mitra DUDI"
+    },
+    "/students/{studentId}": {
+      "schema": "Student",
+      "description": "Daftar Siswa"
+    },
+    "/attendanceRecords/{recordId}": {
+      "schema": "AttendanceRecord",
+      "description": "Daftar Rekam Presensi & Jurnal"
+    }
+  }
+}

@@ -1,4 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
+import { db, ensureAuthReady } from '../firebase';
+import { doc, setDoc, onSnapshot } from 'firebase/firestore';
 import {
   TeMaState,
   Department,
@@ -166,68 +168,135 @@ export const TeMaProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [activeStudentTab, setActiveStudentTab] = useState<'home' | 'history'>('home');
   const [activeGuruTab, setActiveGuruTab] = useState<'recap' | 'students' | 'industries' | 'classes'>('recap');
 
-  // Authoritative Cloud Fetch: immediately sets state with server data
+  // Realtime Cloud Synchronization with Firebase Firestore
+  const pushStateToCloud = async (newState: TeMaState) => {
+    setState(newState);
+    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(newState));
+
+    const stateToPersist = {
+      departments: newState.departments || [],
+      classes: newState.classes || [],
+      industries: newState.industries || [],
+      students: newState.students || [],
+      attendanceRecords: newState.attendanceRecords || [],
+      appSettings: newState.appSettings,
+      lastUpdated: new Date().toISOString(),
+    };
+
+    // 1. Primary: Save to Firebase Firestore Real-Time Cloud Document
+    try {
+      await setDoc(doc(db, 'tema_data', 'current_state'), stateToPersist, { merge: true });
+      setSyncStatus('synced');
+      setLastSyncTime(new Date());
+    } catch (err) {
+      console.warn('Firestore write notice:', err);
+    }
+
+    // 2. Secondary: Redundant fallback to backend API
+    try {
+      fetch('/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(stateToPersist),
+      }).catch(() => {});
+    } catch {
+      // ignore
+    }
+  };
+
+  // Fallback REST fetch if Firestore is ever offline
   const fetchCloudState = useCallback(async () => {
     try {
       const res = await fetch('/api/state');
       if (res.ok) {
         const cloudData: TeMaState = await res.json();
-        // Server data is authoritative
-        setState(cloudData);
-        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(cloudData));
-        setSyncStatus('synced');
-        setLastSyncTime(new Date());
-      } else {
-        setSyncStatus('offline');
+        let localData: TeMaState | null = null;
+        try {
+          const localSaved = localStorage.getItem(LOCAL_STORAGE_KEY);
+          if (localSaved) localData = JSON.parse(localSaved);
+        } catch {
+          // ignore
+        }
+
+        const cloudHasData = Boolean(
+          (cloudData.students && cloudData.students.length > 0) ||
+          (cloudData.attendanceRecords && cloudData.attendanceRecords.length > 0) ||
+          (cloudData.industries && cloudData.industries.length > 0)
+        );
+
+        const localHasData = Boolean(
+          localData && (
+            (localData.students && localData.students.length > 0) ||
+            (localData.attendanceRecords && localData.attendanceRecords.length > 0) ||
+            (localData.industries && localData.industries.length > 0)
+          )
+        );
+
+        if (!cloudHasData && localHasData && localData) {
+          await pushStateToCloud(localData);
+        } else if (cloudHasData) {
+          setState(cloudData);
+          localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(cloudData));
+          setSyncStatus('synced');
+          setLastSyncTime(new Date());
+        }
       }
     } catch (err) {
-      console.warn('Sync error:', err);
-      setSyncStatus('offline');
+      console.warn('REST sync error:', err);
     } finally {
       setLoading(false);
     }
   }, []);
 
-  // Post state directly to server
-  const pushStateToCloud = async (newState: TeMaState) => {
-    setState(newState);
-    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(newState));
-    try {
-      const res = await fetch('/api/sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newState),
-      });
-      if (res.ok) {
-        const result = await res.json();
-        if (result.data) {
-          setState(result.data);
-          localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(result.data));
-        }
-        setSyncStatus('synced');
-        setLastSyncTime(new Date());
-      }
-    } catch (err) {
-      console.warn('Sync push error:', err);
-      setSyncStatus('offline');
-    }
-  };
-
-  // Auto-sync polling every 1.5 seconds + on window focus
+  // Real-time Firebase Firestore listener across all devices and browsers
   useEffect(() => {
-    fetchCloudState();
-    const interval = setInterval(fetchCloudState, 1500);
+    ensureAuthReady();
 
-    const handleFocus = () => fetchCloudState();
-    window.addEventListener('focus', handleFocus);
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') fetchCloudState();
-    });
+    const docRef = doc(db, 'tema_data', 'current_state');
 
-    return () => {
-      clearInterval(interval);
-      window.removeEventListener('focus', handleFocus);
-    };
+    // Subscribe to real-time Firestore updates
+    const unsubscribe = onSnapshot(
+      docRef,
+      (snapshot) => {
+        if (snapshot.exists()) {
+          const cloudData = snapshot.data() as TeMaState;
+          if (cloudData) {
+            const cleanState: TeMaState = {
+              departments: cloudData.departments || [],
+              classes: cloudData.classes || [],
+              industries: cloudData.industries || [],
+              students: cloudData.students || [],
+              attendanceRecords: cloudData.attendanceRecords || [],
+              appSettings: cloudData.appSettings || {
+                schoolName: 'SMK Negeri 1',
+                academicYear: '2025/2026',
+                teacherPasscode: '12345',
+                adminPasscode: 'P4ssw0rd_*',
+                minJournalLength: 200,
+                notificationReminderTime: '07:30',
+              },
+              lastUpdated: cloudData.lastUpdated || new Date().toISOString(),
+            };
+            setState(cleanState);
+            localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(cleanState));
+            setSyncStatus('synced');
+            setLastSyncTime(new Date());
+          }
+        } else {
+          // Brand new Firestore document
+          setSyncStatus('synced');
+        }
+        setLoading(false);
+      },
+      (error) => {
+        console.warn('Firestore real-time listener notice:', error);
+        setSyncStatus('offline');
+        setLoading(false);
+        fetchCloudState();
+      }
+    );
+
+    return () => unsubscribe();
   }, [fetchCloudState]);
 
   // Role Login Handlers

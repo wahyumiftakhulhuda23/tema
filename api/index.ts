@@ -1,5 +1,7 @@
 // Vercel Serverless Function Handler for /api/*
 import type { IncomingMessage, ServerResponse } from 'http';
+import fs from 'fs';
+import path from 'path';
 
 interface VercelRequest extends IncomingMessage {
   query?: Record<string, string | string[]>;
@@ -14,51 +16,15 @@ interface VercelResponse extends ServerResponse {
   send: (data: any) => void;
 }
 
-// In-memory store for serverless runtime
-let globalState: any = {
-  departments: [
-    { id: 'dep-1', name: 'REKAYASA PERANGKAT LUNAK', code: 'RPL' },
-    { id: 'dep-2', name: 'DESAIN KOMUNIKASI VISUAL', code: 'DKV' },
-    { id: 'dep-3', name: 'TEKNIK KENDARAAN RINGAN OTOMOTIF', code: 'TKRO' }
-  ],
-  classes: [
-    { id: 'cls-1', name: 'XII RPL 1', departmentId: 'dep-1', departmentName: 'REKAYASA PERANGKAT LUNAK' },
-    { id: 'cls-2', name: 'XII DKV 1', departmentId: 'dep-2', departmentName: 'DESAIN KOMUNIKASI VISUAL' },
-    { id: 'cls-3', name: 'XII TKRO 1', departmentId: 'dep-3', departmentName: 'TEKNIK KENDARAAN RINGAN OTOMOTIF' }
-  ],
-  industries: [
-    {
-      id: 'ind-1',
-      name: 'PT REKATAMA DIGITAL SOLUSI',
-      concentration: 'PENGEMBANGAN WEB & APLIKASI MOBILE',
-      address: 'JL. SOEKARNO HATTA NO. 45 BANDUNG',
-      owner: 'BAPAK HENDRA WIJAYA',
-      phone: '0812-3456-7890',
-      activeDays: ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat'],
-      workHours: '08:00 - 16:00',
-      latitude: -6.9175,
-      longitude: 107.6191,
-      radiusMeter: 250,
-    }
-  ],
-  students: [
-    {
-      id: 'stu-1',
-      nis: '',
-      name: 'MUHAMMAD FAJAR RAMADHAN',
-      departmentId: 'dep-1',
-      departmentName: 'REKAYASA PERANGKAT LUNAK',
-      classId: 'cls-1',
-      className: 'XII RPL 1',
-      industryId: 'ind-1',
-      industryName: 'PT REKATAMA DIGITAL SOLUSI',
-      phone: '',
-      status: 'Aktif',
-    }
-  ],
+// 100% CLEAN EMPTY INITIAL DATA FOR PRODUCTION RELEASE
+const EMPTY_DATA = {
+  departments: [],
+  classes: [],
+  industries: [],
+  students: [],
   attendanceRecords: [],
   appSettings: {
-    schoolName: 'SMK NEGERI 1',
+    schoolName: 'SMK Negeri 1',
     academicYear: '2025/2026',
     teacherPasscode: '12345',
     adminPasscode: 'P4ssw0rd_*',
@@ -68,22 +34,53 @@ let globalState: any = {
   lastUpdated: new Date().toISOString(),
 };
 
-const EMPTY_DATA = {
-  departments: [],
-  classes: [],
-  industries: [],
-  students: [],
-  attendanceRecords: [],
-  appSettings: {
-    schoolName: 'SMK NEGERI 1',
-    academicYear: '2025/2026',
-    teacherPasscode: '12345',
-    adminPasscode: 'P4ssw0rd_*',
-    minJournalLength: 200,
-    notificationReminderTime: '07:30',
-  },
-  lastUpdated: new Date().toISOString(),
-};
+// Storage path in Vercel / serverless runtime
+const DATA_DIR = process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME ? '/tmp' : path.join(process.cwd(), 'data');
+const DATA_FILE = path.join(DATA_DIR, 'tema_database.json');
+
+// In-memory fallback cache
+let cachedState: any = null;
+
+function readDatabase() {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    if (fs.existsSync(DATA_FILE)) {
+      const content = fs.readFileSync(DATA_FILE, 'utf-8');
+      const parsed = JSON.parse(content);
+      if (!parsed.departments) parsed.departments = [];
+      if (!parsed.classes) parsed.classes = [];
+      if (!parsed.industries) parsed.industries = [];
+      if (!parsed.students) parsed.students = [];
+      if (!parsed.attendanceRecords) parsed.attendanceRecords = [];
+      cachedState = parsed;
+      return parsed;
+    }
+  } catch (err) {
+    console.warn('Could not read file database, using cache/clean:', err);
+  }
+
+  if (cachedState) return cachedState;
+  cachedState = JSON.parse(JSON.stringify(EMPTY_DATA));
+  return cachedState;
+}
+
+function writeDatabase(data: any) {
+  try {
+    data.lastUpdated = new Date().toISOString();
+    cachedState = data;
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2), 'utf-8');
+    return true;
+  } catch (err) {
+    console.warn('Could not write to file database, cached in-memory:', err);
+    cachedState = data;
+    return true;
+  }
+}
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Enable CORS
@@ -137,22 +134,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // 2. GET /api/state
     if (url.includes('/api/state') && method === 'GET') {
-      return sendJson(200, globalState);
+      const db = readDatabase();
+      return sendJson(200, db);
     }
 
     // 3. POST /api/sync
     if (url.includes('/api/sync') && method === 'POST') {
       const incoming = await parseBody();
-      globalState = {
-        departments: incoming.departments !== undefined ? incoming.departments : globalState.departments,
-        industries: incoming.industries !== undefined ? incoming.industries : globalState.industries,
-        classes: incoming.classes !== undefined ? incoming.classes : globalState.classes,
-        students: incoming.students !== undefined ? incoming.students : globalState.students,
-        attendanceRecords: incoming.attendanceRecords !== undefined ? incoming.attendanceRecords : globalState.attendanceRecords,
-        appSettings: incoming.appSettings || globalState.appSettings,
+      const current = readDatabase();
+
+      const mergedState = {
+        departments: incoming.departments !== undefined ? incoming.departments : current.departments,
+        industries: incoming.industries !== undefined ? incoming.industries : current.industries,
+        classes: incoming.classes !== undefined ? incoming.classes : current.classes,
+        students: incoming.students !== undefined ? incoming.students : current.students,
+        attendanceRecords: incoming.attendanceRecords !== undefined ? incoming.attendanceRecords : current.attendanceRecords,
+        appSettings: incoming.appSettings || current.appSettings,
         lastUpdated: new Date().toISOString(),
       };
-      return sendJson(200, { success: true, data: globalState });
+
+      writeDatabase(mergedState);
+      return sendJson(200, { success: true, data: mergedState });
     }
 
     // 4. POST /api/attendance
@@ -162,45 +164,51 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return sendJson(400, { error: 'Data absensi tidak lengkap' });
       }
 
-      const existingIndex = globalState.attendanceRecords.findIndex(
+      const db = readDatabase();
+      const existingIndex = (db.attendanceRecords || []).findIndex(
         (r: any) => r.studentId === newRecord.studentId && r.date === newRecord.date
       );
 
       if (existingIndex >= 0) {
-        globalState.attendanceRecords[existingIndex] = {
-          ...globalState.attendanceRecords[existingIndex],
+        db.attendanceRecords[existingIndex] = {
+          ...db.attendanceRecords[existingIndex],
           ...newRecord,
           updatedAt: new Date().toISOString(),
         };
       } else {
-        globalState.attendanceRecords.unshift({
+        if (!db.attendanceRecords) db.attendanceRecords = [];
+        db.attendanceRecords.unshift({
           id: newRecord.id || `att-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
           createdAt: new Date().toISOString(),
           ...newRecord,
         });
       }
 
-      globalState.lastUpdated = new Date().toISOString();
-      return sendJson(200, { success: true, record: newRecord, records: globalState.attendanceRecords });
+      writeDatabase(db);
+      return sendJson(200, { success: true, record: newRecord, records: db.attendanceRecords });
     }
 
     // 4b. DELETE /api/attendance
     if (url.includes('/api/attendance') && method === 'DELETE') {
       const parts = url.split('/');
       const id = parts[parts.length - 1];
-      globalState.attendanceRecords = (globalState.attendanceRecords || []).filter((r: any) => r.id !== id);
-      globalState.lastUpdated = new Date().toISOString();
-      return sendJson(200, { success: true, message: 'Presensi/Jurnal dihapus', records: globalState.attendanceRecords });
+      const db = readDatabase();
+      db.attendanceRecords = (db.attendanceRecords || []).filter((r: any) => r.id !== id);
+      writeDatabase(db);
+      return sendJson(200, { success: true, message: 'Presensi/Jurnal dihapus', records: db.attendanceRecords });
     }
 
     // 5. POST /api/clear-all
     if (url.includes('/api/clear-all') && method === 'POST') {
-      globalState = { ...EMPTY_DATA, lastUpdated: new Date().toISOString() };
-      return sendJson(200, { success: true, message: 'Semua data telah dikosongkan', data: globalState });
+      const cleanData = JSON.parse(JSON.stringify(EMPTY_DATA));
+      cleanData.lastUpdated = new Date().toISOString();
+      writeDatabase(cleanData);
+      return sendJson(200, { success: true, message: 'Semua data telah dikosongkan', data: cleanData });
     }
 
-    // Default fallback
-    return sendJson(200, globalState);
+    // Default fallback: return current database state
+    const currentDB = readDatabase();
+    return sendJson(200, currentDB);
   } catch (err: any) {
     return sendJson(500, { error: err.message || 'Internal Server Error' });
   }
