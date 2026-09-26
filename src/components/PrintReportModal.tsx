@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useTeMa } from '../context/TeMaContext';
 import {
   formatIndonesianDate,
@@ -7,8 +7,9 @@ import {
   exportToExcel,
   getTodayDateString
 } from '../utils/helpers';
-import { Printer, Download, X, FileText } from 'lucide-react';
-import { playTap, playSuccess } from '../utils/sound';
+import { exportToPDF } from '../utils/pdfExport';
+import { Printer, Download, X, FileText, FileDown } from 'lucide-react';
+import { playTap, playSuccess, playWarning } from '../utils/sound';
 
 interface Props {
   isOpen: boolean;
@@ -107,11 +108,34 @@ export const PrintReportModal: React.FC<Props> = ({ isOpen, onClose, filterParam
     return { total, hadir, izin, sakit, belumAbsen, libur, rate };
   }, [reportData]);
 
+  const [pdfGenerating, setPdfGenerating] = useState(false);
+
   if (!isOpen) return null;
 
   const handlePrint = () => {
     playSuccess();
     window.print();
+  };
+
+  const handlePDFExport = () => {
+    playTap();
+    setPdfGenerating(true);
+    try {
+      exportToPDF({
+        reportData,
+        schoolName: state.appSettings.schoolName,
+        academicYear: state.appSettings.academicYear,
+        startDate,
+        endDate,
+        stats,
+      });
+      playSuccess();
+    } catch (err) {
+      console.error(err);
+      playWarning();
+    } finally {
+      setPdfGenerating(false);
+    }
   };
 
   const handleExcelExport = () => {
@@ -156,7 +180,7 @@ export const PrintReportModal: React.FC<Props> = ({ isOpen, onClose, filterParam
     <div className="fixed inset-0 z-50 overflow-y-auto bg-black/85 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 text-slate-900">
       <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-4xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
         {/* Action Header */}
-        <div className="p-3 bg-slate-950 text-white flex items-center justify-between no-print shrink-0 border-b border-slate-800">
+        <div className="p-3 bg-slate-950 text-white flex flex-wrap items-center justify-between gap-2 no-print shrink-0 border-b border-slate-800">
           <div className="flex items-center gap-2">
             <span className="w-2.5 h-2.5 rounded-full bg-emerald-400"></span>
             <span className="text-xs font-bold tracking-wide">
@@ -164,13 +188,14 @@ export const PrintReportModal: React.FC<Props> = ({ isOpen, onClose, filterParam
             </span>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
             <button
-              onClick={handlePrint}
-              className="py-1.5 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-md active:scale-95 transition-all"
+              onClick={handlePDFExport}
+              disabled={pdfGenerating}
+              className="py-1.5 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-md active:scale-95 transition-all disabled:opacity-50"
             >
-              <Printer className="w-3.5 h-3.5" />
-              Cetak / Simpan PDF
+              <FileDown className="w-3.5 h-3.5" />
+              <span>{pdfGenerating ? 'Memproses PDF...' : 'Unduh File PDF'}</span>
             </button>
             <button
               onClick={handleExcelExport}
@@ -178,6 +203,14 @@ export const PrintReportModal: React.FC<Props> = ({ isOpen, onClose, filterParam
             >
               <Download className="w-3.5 h-3.5" />
               Unduh Excel Rapi
+            </button>
+            <button
+              onClick={handlePrint}
+              className="py-1.5 px-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold flex items-center gap-1 border border-slate-700 active:scale-95 transition-all"
+              title="Print Dialog Browser"
+            >
+              <Printer className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Print Dialog</span>
             </button>
             <button
               onClick={() => {

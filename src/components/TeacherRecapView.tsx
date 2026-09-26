@@ -4,11 +4,10 @@ import {
   formatIndonesianDate,
   formatIndonesianDateShort,
   getTodayDateString,
-  getPastDaysDateString,
-  getFirstDayOfMonthDateString,
   getDateRangeArray,
   exportToExcel
 } from '../utils/helpers';
+import { exportToPDF } from '../utils/pdfExport';
 import {
   Users,
   CheckCircle2,
@@ -27,9 +26,13 @@ import {
   ChevronRight,
   Sparkles,
   BarChart3,
-  ListFilter
+  ListFilter,
+  Trash2,
+  AlertTriangle,
+  X,
+  FileDown
 } from 'lucide-react';
-import { playTap, playSuccess } from '../utils/sound';
+import { playTap, playSuccess, playDelete, playWarning } from '../utils/sound';
 
 interface Props {
   onOpenPrintModal: (filterParams: {
@@ -47,12 +50,12 @@ export const TeacherRecapView: React.FC<Props> = ({ onOpenPrintModal }) => {
     state,
     getStudentTodayStatus,
     sendLocalNotification,
+    deleteAttendanceRecord,
   } = useTeMa();
 
-  // Date range state (Default: 7 Hari Terakhir s/d Hari ini)
-  const [startDate, setStartDate] = useState<string>(getPastDaysDateString(6));
+  // Date range state (Default: Hari ini)
+  const [startDate, setStartDate] = useState<string>(getTodayDateString());
   const [endDate, setEndDate] = useState<string>(getTodayDateString());
-  const [activePreset, setActivePreset] = useState<'today' | '7days' | '30days' | 'thisMonth' | 'custom'>('7days');
 
   // Sub-view: 'journals' (Daftar Jurnal & Presensi) | 'summary' (Ringkasan Per Siswa)
   const [activeViewMode, setActiveViewMode] = useState<'journals' | 'summary'>('journals');
@@ -64,25 +67,15 @@ export const TeacherRecapView: React.FC<Props> = ({ onOpenPrintModal }) => {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [reminderSent, setReminderSent] = useState<boolean>(false);
 
-  // Set date range preset
-  const handleApplyPreset = (preset: 'today' | '7days' | '30days' | 'thisMonth') => {
-    playTap();
-    setActivePreset(preset);
-    const today = getTodayDateString();
-    if (preset === 'today') {
-      setStartDate(today);
-      setEndDate(today);
-    } else if (preset === '7days') {
-      setStartDate(getPastDaysDateString(6));
-      setEndDate(today);
-    } else if (preset === '30days') {
-      setStartDate(getPastDaysDateString(29));
-      setEndDate(today);
-    } else if (preset === 'thisMonth') {
-      setStartDate(getFirstDayOfMonthDateString());
-      setEndDate(today);
-    }
-  };
+  // Delete modal state
+  const [recordToDelete, setRecordToDelete] = useState<{
+    id: string;
+    studentId: string;
+    studentName: string;
+    date: string;
+    journal: string;
+    status: string;
+  } | null>(null);
 
   // Generate date list within the selected range
   const dateRangeList = useMemo(() => {
@@ -110,9 +103,8 @@ export const TeacherRecapView: React.FC<Props> = ({ onOpenPrintModal }) => {
       journal: string;
       notes: string;
       isActiveDay: boolean;
+      hasActualRecord: boolean;
     }> = [];
-
-    const studentMap = new Map((state.students || []).map(s => [s.id, s]));
 
     dateRangeList.forEach(targetDate => {
       (state.students || []).forEach(student => {
@@ -138,6 +130,7 @@ export const TeacherRecapView: React.FC<Props> = ({ onOpenPrintModal }) => {
           journal: record?.journal || '',
           notes: record?.notes || statusInfo.reason || (statusInfo.status === 'Libur' ? 'Hari Libur Industri' : ''),
           isActiveDay: statusInfo.isActiveDay,
+          hasActualRecord: !!record,
         });
       });
     });
@@ -180,73 +173,120 @@ export const TeacherRecapView: React.FC<Props> = ({ onOpenPrintModal }) => {
   // Aggregate statistics per student for the selected date range
   const studentSummaries = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    return (state.students || [])
-      .filter(student => {
-        const matchSearch =
-          !q ||
-          student.name.toLowerCase().includes(q) ||
-          (student.className && student.className.toLowerCase().includes(q)) ||
-          (student.departmentName && student.departmentName.toLowerCase().includes(q)) ||
-          (student.industryName && student.industryName.toLowerCase().includes(q));
+    const students = (state.students || []).filter(student => {
+      const matchSearch =
+        !q ||
+        student.name.toLowerCase().includes(q) ||
+        (student.className && student.className.toLowerCase().includes(q)) ||
+        (student.departmentName && student.departmentName.toLowerCase().includes(q)) ||
+        (student.industryName && student.industryName.toLowerCase().includes(q));
 
-        const matchDept =
-          selectedDept === 'all' ||
-          student.departmentId === selectedDept ||
-          (student.departmentName && student.departmentName.toLowerCase().includes(selectedDept.toLowerCase()));
+      const matchDept =
+        selectedDept === 'all' ||
+        student.departmentId === selectedDept ||
+        (student.departmentName && student.departmentName.toLowerCase().includes(selectedDept.toLowerCase()));
 
-        const matchIndustry =
-          selectedIndustry === 'all' || student.industryId === selectedIndustry;
+      const matchIndustry =
+        selectedIndustry === 'all' || student.industryId === selectedIndustry;
 
-        return matchSearch && matchDept && matchIndustry;
-      })
-      .map(student => {
-        const studentRecords = rangeAttendanceRecords.filter(r => r.studentId === student.id);
-        const totalDays = studentRecords.length;
-        const hadir = studentRecords.filter(r => r.status === 'Hadir').length;
-        const izin = studentRecords.filter(r => r.status === 'Izin').length;
-        const sakit = studentRecords.filter(r => r.status === 'Sakit').length;
-        const belumAbsen = studentRecords.filter(r => r.status === 'Belum Absen').length;
-        const libur = studentRecords.filter(r => r.status === 'Libur').length;
-        const activeDays = totalDays - libur;
-        const rate = activeDays > 0 ? Math.round((hadir / activeDays) * 100) : 100;
-        const journalsCount = studentRecords.filter(r => r.journal && r.journal.trim().length > 0).length;
+      return matchSearch && matchDept && matchIndustry;
+    });
 
-        return {
-          student,
-          totalDays,
-          hadir,
-          izin,
-          sakit,
-          belumAbsen,
-          libur,
-          rate,
-          journalsCount,
-        };
+    return students.map(student => {
+      let hadir = 0;
+      let izin = 0;
+      let sakit = 0;
+      let belumAbsen = 0;
+      let libur = 0;
+      let journalsCount = 0;
+
+      dateRangeList.forEach(targetDate => {
+        const info = getStudentTodayStatus(student.id, targetDate);
+        if (info.status === 'Hadir') {
+          hadir++;
+          if (info.record?.journal && info.record.journal.trim().length > 0) {
+            journalsCount++;
+          }
+        } else if (info.status === 'Izin') {
+          izin++;
+        } else if (info.status === 'Sakit') {
+          sakit++;
+        } else if (info.status === 'Libur') {
+          libur++;
+        } else {
+          belumAbsen++;
+        }
       });
-  }, [state.students, rangeAttendanceRecords, searchQuery, selectedDept, selectedIndustry]);
 
-  // KPI Summary across the whole selected date range
-  const summaryStats = useMemo(() => {
-    const total = filteredRecords.length;
-    const hadir = filteredRecords.filter(s => s.status === 'Hadir').length;
-    const izin = filteredRecords.filter(s => s.status === 'Izin').length;
-    const sakit = filteredRecords.filter(s => s.status === 'Sakit').length;
-    const belumAbsen = filteredRecords.filter(s => s.status === 'Belum Absen').length;
-    const libur = filteredRecords.filter(s => s.status === 'Libur').length;
-    const activeTarget = total - libur;
-    const attendancePercentage = activeTarget > 0 ? Math.round((hadir / activeTarget) * 100) : 100;
-    const journalsCount = filteredRecords.filter(s => s.journal && s.journal.trim().length > 0).length;
+      const totalActiveDays = hadir + izin + sakit + belumAbsen;
+      const rate = totalActiveDays > 0 ? Math.round((hadir / totalActiveDays) * 100) : 0;
 
-    return { total, hadir, izin, sakit, belumAbsen, libur, attendancePercentage, journalsCount };
-  }, [filteredRecords]);
+      return {
+        student,
+        totalDays: dateRangeList.length,
+        totalActiveDays,
+        hadir,
+        izin,
+        sakit,
+        belumAbsen,
+        libur,
+        rate,
+        journalsCount,
+      };
+    });
+  }, [state.students, dateRangeList, getStudentTodayStatus, searchQuery, selectedDept, selectedIndustry]);
 
-  // Batch reminder for today's unsubmitted students
-  const handleSendBatchReminder = () => {
+  // Overall Range Stats
+  const rangeStats = useMemo(() => {
+    let hadir = 0;
+    let izin = 0;
+    let sakit = 0;
+    let belumAbsen = 0;
+    let libur = 0;
+    let totalJournals = 0;
+
+    rangeAttendanceRecords.forEach(r => {
+      if (r.status === 'Hadir') {
+        hadir++;
+        if (r.journal) totalJournals++;
+      } else if (r.status === 'Izin') {
+        izin++;
+      } else if (r.status === 'Sakit') {
+        sakit++;
+      } else if (r.status === 'Libur') {
+        libur++;
+      } else {
+        belumAbsen++;
+      }
+    });
+
+    const activeTotal = hadir + izin + sakit + belumAbsen;
+    const rate = activeTotal > 0 ? Math.round((hadir / activeTotal) * 100) : 0;
+
+    return { hadir, izin, sakit, belumAbsen, libur, totalJournals, rate, totalRecords: rangeAttendanceRecords.length };
+  }, [rangeAttendanceRecords]);
+
+  // Confirm delete journal/attendance record
+  const handleConfirmDelete = async () => {
+    if (!recordToDelete) return;
+    try {
+      await deleteAttendanceRecord(recordToDelete.id, recordToDelete.studentId, recordToDelete.date);
+      playDelete();
+      setRecordToDelete(null);
+    } catch (e) {
+      console.error(e);
+      playWarning();
+    }
+  };
+
+  // Broadcast Reminder to students who haven't submitted today
+  const handleSendReminder = () => {
     playTap();
     const today = getTodayDateString();
-    const unsubmittedToday = rangeAttendanceRecords.filter(
-      s => s.date === today && s.status === 'Belum Absen'
-    );
+    const unsubmittedToday = (state.students || []).filter(s => {
+      const statusInfo = getStudentTodayStatus(s.id, today);
+      return statusInfo.status === 'Belum Absen' && statusInfo.isActiveDay;
+    });
 
     if (unsubmittedToday.length === 0) {
       sendLocalNotification(
@@ -304,6 +344,42 @@ export const TeacherRecapView: React.FC<Props> = ({ onOpenPrintModal }) => {
     playSuccess();
   };
 
+  const handleExportPDF = () => {
+    playTap();
+    const pdfData = filteredRecords.map(item => ({
+      id: item.id,
+      date: item.date,
+      studentId: item.studentId,
+      studentName: item.studentName,
+      className: item.className,
+      departmentName: item.departmentName,
+      industryName: item.industryName,
+      status: item.status,
+      time: item.time,
+      journal: item.journal,
+      notes: item.notes,
+      verified: item.verified,
+    }));
+
+    exportToPDF({
+      reportData: pdfData,
+      schoolName: state.appSettings.schoolName,
+      academicYear: state.appSettings.academicYear,
+      startDate,
+      endDate,
+      stats: {
+        total: rangeStats.totalRecords,
+        hadir: rangeStats.hadir,
+        izin: rangeStats.izin,
+        sakit: rangeStats.sakit,
+        belumAbsen: rangeStats.belumAbsen,
+        libur: rangeStats.libur,
+        rate: rangeStats.rate,
+      },
+    });
+    playSuccess();
+  };
+
   const handleOpenPrint = () => {
     playTap();
     onOpenPrintModal({
@@ -317,7 +393,7 @@ export const TeacherRecapView: React.FC<Props> = ({ onOpenPrintModal }) => {
   };
 
   return (
-    <div className="p-3.5 space-y-3.5 pb-24 text-slate-100">
+    <div className="p-3.5 space-y-3.5 pb-24 text-slate-100 max-w-full overflow-x-hidden">
       {/* Header Info */}
       <div className="flex items-center justify-between">
         <div>
@@ -340,63 +416,15 @@ export const TeacherRecapView: React.FC<Props> = ({ onOpenPrintModal }) => {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-1.5 text-xs font-bold text-white">
             <Calendar className="w-3.5 h-3.5 text-amber-400" />
-            <span>Rentang Tanggal Rekapitulasi</span>
+            <span>Pilihan Rentang Tanggal</span>
           </div>
           <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30">
             {dateRangeList.length} Hari Dipilih
           </span>
         </div>
 
-        {/* Quick Date Range Preset Buttons */}
-        <div className="grid grid-cols-4 gap-1">
-          <button
-            type="button"
-            onClick={() => handleApplyPreset('today')}
-            className={`py-1.5 px-1 rounded-xl text-[10px] font-bold transition-all text-center border ${
-              activePreset === 'today'
-                ? 'bg-amber-400 text-slate-950 border-amber-400 shadow-md shadow-amber-400/20'
-                : 'bg-slate-800 text-slate-300 border-slate-700 hover:text-white'
-            }`}
-          >
-            Hari Ini
-          </button>
-          <button
-            type="button"
-            onClick={() => handleApplyPreset('7days')}
-            className={`py-1.5 px-1 rounded-xl text-[10px] font-bold transition-all text-center border ${
-              activePreset === '7days'
-                ? 'bg-amber-400 text-slate-950 border-amber-400 shadow-md shadow-amber-400/20'
-                : 'bg-slate-800 text-slate-300 border-slate-700 hover:text-white'
-            }`}
-          >
-            7 Hari
-          </button>
-          <button
-            type="button"
-            onClick={() => handleApplyPreset('30days')}
-            className={`py-1.5 px-1 rounded-xl text-[10px] font-bold transition-all text-center border ${
-              activePreset === '30days'
-                ? 'bg-amber-400 text-slate-950 border-amber-400 shadow-md shadow-amber-400/20'
-                : 'bg-slate-800 text-slate-300 border-slate-700 hover:text-white'
-            }`}
-          >
-            30 Hari
-          </button>
-          <button
-            type="button"
-            onClick={() => handleApplyPreset('thisMonth')}
-            className={`py-1.5 px-1 rounded-xl text-[10px] font-bold transition-all text-center border ${
-              activePreset === 'thisMonth'
-                ? 'bg-amber-400 text-slate-950 border-amber-400 shadow-md shadow-amber-400/20'
-                : 'bg-slate-800 text-slate-300 border-slate-700 hover:text-white'
-            }`}
-          >
-            Bulan Ini
-          </button>
-        </div>
-
         {/* Date Pickers: DARI TANGGAL -> SAMPAI TANGGAL */}
-        <div className="grid grid-cols-2 gap-2 pt-1 border-t border-slate-800">
+        <div className="grid grid-cols-2 gap-2 pt-0.5">
           <div>
             <label className="text-[10px] font-semibold text-slate-400 block mb-1">
               Dari Tanggal (Mulai):
@@ -405,8 +433,9 @@ export const TeacherRecapView: React.FC<Props> = ({ onOpenPrintModal }) => {
               type="date"
               value={startDate}
               onChange={e => {
-                setStartDate(e.target.value);
-                setActivePreset('custom');
+                const val = e.target.value;
+                setStartDate(val);
+                if (val > endDate) setEndDate(val);
               }}
               className="w-full py-1.5 px-2.5 text-xs rounded-xl bg-slate-800 border border-slate-700 font-semibold text-white focus:outline-none focus:border-amber-400"
             />
@@ -419,83 +448,105 @@ export const TeacherRecapView: React.FC<Props> = ({ onOpenPrintModal }) => {
               type="date"
               value={endDate}
               min={startDate}
-              onChange={e => {
-                setEndDate(e.target.value);
-                setActivePreset('custom');
-              }}
+              onChange={e => setEndDate(e.target.value)}
               className="w-full py-1.5 px-2.5 text-xs rounded-xl bg-slate-800 border border-slate-700 font-semibold text-white focus:outline-none focus:border-amber-400"
             />
           </div>
         </div>
 
-        {/* Action Buttons: Export Styled Excel + Print PDF */}
-        <div className="grid grid-cols-2 gap-2 pt-1">
+        {/* Action Buttons: Export Styled Excel + Unduh PDF + Cetak / Preview */}
+        <div className="grid grid-cols-3 gap-1.5 pt-1 border-t border-slate-800">
           <button
             type="button"
             onClick={handleExportExcel}
-            className="w-full py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-md shadow-emerald-600/25 transition-all"
+            className="w-full py-2 px-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white text-[11px] font-bold flex items-center justify-center gap-1 shadow-md shadow-emerald-600/25 transition-all truncate"
+            title="Unduh File Excel Berwarna"
           >
-            <FileSpreadsheet className="w-3.5 h-3.5" />
-            <span>Unduh Excel Rapi</span>
+            <FileSpreadsheet className="w-3.5 h-3.5 shrink-0" />
+            <span className="truncate">Unduh Excel</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={handleExportPDF}
+            className="w-full py-2 px-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white text-[11px] font-bold flex items-center justify-center gap-1 shadow-md shadow-indigo-600/25 transition-all truncate"
+            title="Unduh Laporan PDF Resmi"
+          >
+            <FileDown className="w-3.5 h-3.5 shrink-0" />
+            <span className="truncate">Unduh PDF</span>
           </button>
 
           <button
             type="button"
             onClick={handleOpenPrint}
-            className="w-full py-2 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-md shadow-indigo-600/25 transition-all"
+            className="w-full py-2 px-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-200 border border-slate-700 text-[11px] font-bold flex items-center justify-center gap-1 transition-all truncate"
+            title="Pratinjau Cetak / Print"
           >
-            <Printer className="w-3.5 h-3.5" />
-            <span>Cetak / PDF</span>
+            <Printer className="w-3.5 h-3.5 shrink-0" />
+            <span className="truncate">Pratinjau</span>
           </button>
         </div>
       </div>
 
       {/* ======================================================== */}
-      {/* 2. STATS KPI CARDS OVERVIEW                             */}
+      {/* 2. STATS SUMMARY CARDS FOR SELECTED RANGE                */}
       {/* ======================================================== */}
       <div className="grid grid-cols-4 gap-1.5 text-center">
-        <div className="bg-slate-900 p-2.5 rounded-2xl border border-slate-800 shadow-sm">
-          <span className="text-[9px] text-slate-400 block font-semibold">Total Log</span>
-          <span className="text-sm font-extrabold text-white font-mono">{summaryStats.total}</span>
+        <div className="bg-slate-900 p-2 rounded-2xl border border-slate-800">
+          <span className="text-[9px] text-slate-400 block font-semibold">Kehadiran</span>
+          <span className="text-sm font-extrabold text-emerald-400 font-mono">
+            {rangeStats.rate}%
+          </span>
+          <span className="text-[8px] text-slate-500 block">{rangeStats.hadir} Hadir</span>
         </div>
-        <div className="bg-slate-900 p-2.5 rounded-2xl border border-slate-800 shadow-sm">
-          <span className="text-[9px] text-emerald-400 block font-semibold">Hadir</span>
-          <span className="text-sm font-extrabold text-emerald-400 font-mono">{summaryStats.hadir}</span>
-        </div>
-        <div className="bg-slate-900 p-2.5 rounded-2xl border border-slate-800 shadow-sm">
-          <span className="text-[9px] text-cyan-400 block font-semibold">Izin / Sakit</span>
+
+        <div className="bg-slate-900 p-2 rounded-2xl border border-slate-800">
+          <span className="text-[9px] text-slate-400 block font-semibold">Izin / Sakit</span>
           <span className="text-sm font-extrabold text-cyan-400 font-mono">
-            {summaryStats.izin + summaryStats.sakit}
+            {rangeStats.izin + rangeStats.sakit}
           </span>
+          <span className="text-[8px] text-slate-500 block">{rangeStats.izin}I / {rangeStats.sakit}S</span>
         </div>
-        <div className="bg-slate-900 p-2.5 rounded-2xl border border-slate-800 shadow-sm">
-          <span className="text-[9px] text-amber-400 block font-semibold">% Kehadiran</span>
-          <span className="text-sm font-extrabold text-amber-400 font-mono">
-            {summaryStats.attendancePercentage}%
+
+        <div className="bg-slate-900 p-2 rounded-2xl border border-slate-800">
+          <span className="text-[9px] text-slate-400 block font-semibold">Alpa / Belum</span>
+          <span className="text-sm font-extrabold text-rose-400 font-mono">
+            {rangeStats.belumAbsen}
           </span>
+          <span className="text-[8px] text-slate-500 block">Belum Isi</span>
+        </div>
+
+        <div className="bg-slate-900 p-2 rounded-2xl border border-slate-800">
+          <span className="text-[9px] text-slate-400 block font-semibold">Jurnal Masuk</span>
+          <span className="text-sm font-extrabold text-amber-400 font-mono">
+            {rangeStats.totalJournals}
+          </span>
+          <span className="text-[8px] text-slate-500 block">Narasi</span>
         </div>
       </div>
 
       {/* ======================================================== */}
-      {/* 3. SWITCH VIEW: LOG JURNAL vs RINGKASAN PER SISWA        */}
+      {/* 3. MODE SWITCH: LOG JURNAL vs REKAP PER SISWA            */}
       {/* ======================================================== */}
-      <div className="flex bg-slate-900 border border-slate-800 rounded-2xl p-1 gap-1 text-[11px] font-bold">
+      <div className="flex bg-slate-900 p-1 rounded-2xl border border-slate-800 text-xs font-bold">
         <button
+          type="button"
           onClick={() => {
             playTap();
             setActiveViewMode('journals');
           }}
           className={`flex-1 py-2 px-2 rounded-xl transition-all text-center flex items-center justify-center gap-1.5 ${
             activeViewMode === 'journals'
-              ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/25'
+              ? 'bg-amber-400 text-slate-950 shadow-md shadow-amber-400/20'
               : 'text-slate-400 hover:text-slate-200'
           }`}
         >
-          <FileText className="w-3.5 h-3.5" />
+          <ListFilter className="w-3.5 h-3.5" />
           <span>Log Jurnal &amp; Presensi ({filteredRecords.length})</span>
         </button>
 
         <button
+          type="button"
           onClick={() => {
             playTap();
             setActiveViewMode('summary');
@@ -593,7 +644,7 @@ export const TeacherRecapView: React.FC<Props> = ({ onOpenPrintModal }) => {
       {/* 5. VIEW 1: DAFTAR JURNAL & PRESENSI LENGKAP             */}
       {/* ======================================================== */}
       {activeViewMode === 'journals' && (
-        <div className="space-y-2.5">
+        <div className="space-y-2.5 min-w-0 max-w-full">
           <div className="flex items-center justify-between text-[11px] text-slate-400 px-1">
             <span>Daftar Log Presensi &amp; Jurnal ({filteredRecords.length})</span>
             <span>
@@ -615,7 +666,7 @@ export const TeacherRecapView: React.FC<Props> = ({ onOpenPrintModal }) => {
             filteredRecords.map(item => (
               <div
                 key={item.id}
-                className={`p-3.5 rounded-2xl bg-slate-900 border transition-all space-y-2 shadow-sm ${
+                className={`p-3.5 rounded-2xl bg-slate-900 border transition-all space-y-2 shadow-sm min-w-0 max-w-full overflow-hidden ${
                   item.status === 'Hadir'
                     ? 'border-emerald-500/30'
                     : item.status === 'Belum Absen'
@@ -625,91 +676,117 @@ export const TeacherRecapView: React.FC<Props> = ({ onOpenPrintModal }) => {
                     : 'border-slate-800'
                 }`}
               >
-                {/* Header: Date + Student Info + Status Badge */}
-                <div className="flex items-start justify-between gap-2">
+                {/* Header: Date + Student Info + Status Badge + Delete Button */}
+                <div className="flex items-start justify-between gap-2 min-w-0">
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-1.5 mb-1">
-                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-300">
+                    <div className="flex items-center gap-1.5 mb-1 flex-wrap min-w-0">
+                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-300 shrink-0">
                         {item.date}
                       </span>
-                      <span className="text-xs font-bold text-white truncate uppercase">
+                      <span className="text-xs font-bold text-white uppercase break-words min-w-0">
                         {item.studentName}
                       </span>
                     </div>
 
-                    <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-slate-400">
-                      <span className="font-bold text-cyan-400 bg-cyan-500/10 px-1 rounded uppercase">
+                    <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-slate-400 min-w-0">
+                      <span className="font-bold text-cyan-400 bg-cyan-500/10 px-1 rounded uppercase shrink-0">
                         {item.className}
                       </span>
                       {item.departmentName && item.departmentName !== '-' && (
-                        <span className="text-indigo-300 font-semibold bg-indigo-500/10 px-1 rounded uppercase">
+                        <span className="text-indigo-300 font-semibold bg-indigo-500/10 px-1 rounded uppercase truncate max-w-[120px]">
                           {item.departmentName}
                         </span>
                       )}
                       <span>&bull;</span>
-                      <span className="text-slate-300 truncate max-w-[150px] uppercase">
+                      <span className="text-slate-300 truncate max-w-[140px] uppercase">
                         {item.industryName}
                       </span>
                     </div>
                   </div>
 
-                  <span
-                    className={`text-[10px] font-bold px-2 py-0.5 rounded-md shrink-0 border ${
-                      item.status === 'Hadir'
-                        ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
-                        : item.status === 'Libur'
-                        ? 'bg-slate-800 text-slate-400 border-slate-700'
-                        : item.status === 'Izin' || item.status === 'Sakit'
-                        ? 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30'
-                        : 'bg-rose-500/20 text-rose-400 border-rose-500/40'
-                    }`}
-                  >
-                    {item.status}
-                  </span>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <span
+                      className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${
+                        item.status === 'Hadir'
+                          ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                          : item.status === 'Libur'
+                          ? 'bg-slate-800 text-slate-400 border-slate-700'
+                          : item.status === 'Izin' || item.status === 'Sakit'
+                          ? 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30'
+                          : 'bg-rose-500/20 text-rose-400 border-rose-500/40'
+                      }`}
+                    >
+                      {item.status}
+                    </span>
+
+                    {/* Guru can delete student entry if already filled / submitted */}
+                    {item.hasActualRecord && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          playWarning();
+                          setRecordToDelete({
+                            id: item.id,
+                            studentId: item.studentId,
+                            studentName: item.studentName,
+                            date: item.date,
+                            journal: item.journal,
+                            status: item.status,
+                          });
+                        }}
+                        title="Hapus isian presensi & jurnal siswa ini"
+                        className="p-1 rounded-lg bg-rose-500/15 hover:bg-rose-500/30 text-rose-400 border border-rose-500/30 transition-all active:scale-95"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 {/* Time & GPS Verification */}
-                <div className="flex items-center justify-between text-[10px] text-slate-400 pt-1.5 border-t border-slate-800/80">
-                  <span className="flex items-center gap-1">
-                    <Clock className="w-3 h-3 text-slate-500" />
+                <div className="flex items-center justify-between text-[10px] text-slate-400 pt-1.5 border-t border-slate-800/80 min-w-0">
+                  <span className="flex items-center gap-1 truncate">
+                    <Clock className="w-3 h-3 text-slate-500 shrink-0" />
                     <span>Jam Presensi: <strong className="text-white font-mono">{item.time} WIB</strong></span>
                   </span>
 
                   {item.status === 'Hadir' && (
-                    <span className={item.verified ? 'text-emerald-400 font-semibold' : 'text-amber-400 font-semibold'}>
-                      {item.verified ? '✓ Lokasi Terverifikasi DUDI' : '⚠️ Di Luar Radius'}
+                    <span className={`shrink-0 ${item.verified ? 'text-emerald-400 font-semibold' : 'text-amber-400 font-semibold'}`}>
+                      {item.verified ? '✓ Lokasi DUDI' : '⚠️ Di Luar Radius'}
                     </span>
                   )}
                 </div>
 
                 {/* GPS Location details if present */}
                 {item.locationName && (
-                  <p className="text-[10px] text-slate-400 flex items-center gap-1 uppercase truncate">
+                  <p className="text-[10px] text-slate-400 flex items-center gap-1 uppercase truncate min-w-0">
                     <MapPin className="w-3 h-3 text-cyan-400 shrink-0" />
-                    <span>{item.locationName}</span>
+                    <span className="truncate">{item.locationName}</span>
                   </p>
                 )}
 
-                {/* Narrative Journal Content Box */}
+                {/* Narrative Journal Content Box (Strictly Wrap Words & Prevent Overflow) */}
                 {item.journal ? (
-                  <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800/90 space-y-1">
+                  <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800/90 space-y-1 min-w-0 max-w-full overflow-hidden">
                     <div className="flex items-center justify-between text-[10px] font-bold text-cyan-300">
                       <span className="flex items-center gap-1">
-                        <FileText className="w-3 h-3 text-cyan-400" />
+                        <FileText className="w-3 h-3 text-cyan-400 shrink-0" />
                         Jurnal Kegiatan Siswa:
                       </span>
-                      <span className="text-slate-500 font-mono text-[9px]">
+                      <span className="text-slate-500 font-mono text-[9px] shrink-0">
                         {item.journal.length} Karakter
                       </span>
                     </div>
-                    <p className="text-[11px] text-slate-200 leading-relaxed uppercase whitespace-pre-wrap">
-                      {item.journal}
-                    </p>
+                    <div className="w-full min-w-0 max-w-full overflow-hidden">
+                      <p className="text-[11px] text-slate-200 leading-relaxed uppercase whitespace-pre-wrap break-words break-all [overflow-wrap:anywhere] max-w-full">
+                        {item.journal}
+                      </p>
+                    </div>
                   </div>
                 ) : item.notes && item.status !== 'Hadir' ? (
-                  <div className="bg-cyan-950/30 p-2 rounded-xl border border-cyan-500/20 text-[10px] text-cyan-200">
+                  <div className="bg-cyan-950/30 p-2 rounded-xl border border-cyan-500/20 text-[10px] text-cyan-200 min-w-0 max-w-full overflow-hidden">
                     <span className="font-bold">Keterangan: </span>
-                    <span className="uppercase">{item.notes}</span>
+                    <span className="uppercase break-words [overflow-wrap:anywhere]">{item.notes}</span>
                   </div>
                 ) : null}
               </div>
@@ -722,7 +799,7 @@ export const TeacherRecapView: React.FC<Props> = ({ onOpenPrintModal }) => {
       {/* 6. VIEW 2: REKAPITULASI AGREGAT PER SISWA               */}
       {/* ======================================================== */}
       {activeViewMode === 'summary' && (
-        <div className="space-y-2.5">
+        <div className="space-y-2.5 min-w-0 max-w-full">
           <div className="flex items-center justify-between text-[11px] text-slate-400 px-1">
             <span>Rekapitulasi Total Per Siswa ({studentSummaries.length})</span>
             <span>{dateRangeList.length} Hari Kerja / Kalender</span>
@@ -734,14 +811,14 @@ export const TeacherRecapView: React.FC<Props> = ({ onOpenPrintModal }) => {
               <p className="text-xs font-bold text-white">Tidak Ada Data Siswa</p>
             </div>
           ) : (
-            studentSummaries.map(({ student, totalDays, hadir, izin, sakit, belumAbsen, libur, rate, journalsCount }) => (
+            studentSummaries.map(({ student, hadir, izin, sakit, belumAbsen, rate, journalsCount }) => (
               <div
                 key={student.id}
-                className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 space-y-2.5 shadow-sm"
+                className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 space-y-2.5 shadow-sm min-w-0 max-w-full overflow-hidden"
               >
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <h4 className="text-xs font-bold text-white uppercase truncate">{student.name}</h4>
+                <div className="flex items-start justify-between gap-2 min-w-0">
+                  <div className="min-w-0 flex-1">
+                    <h4 className="text-xs font-bold text-white uppercase break-words">{student.name}</h4>
                     <p className="text-[10px] text-slate-400 mt-0.5 truncate uppercase">
                       <span className="text-cyan-400 font-semibold">{student.className}</span>
                       {student.departmentName && ` • ${student.departmentName}`}
@@ -790,6 +867,79 @@ export const TeacherRecapView: React.FC<Props> = ({ onOpenPrintModal }) => {
               </div>
             ))
           )}
+        </div>
+      )}
+
+      {/* ======================================================== */}
+      {/* 7. MODAL CONFIRMATION: HAPUS JURNAL & PRESENSI SISWA     */}
+      {/* ======================================================== */}
+      {recordToDelete && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-sm bg-slate-900 rounded-3xl border border-slate-800 p-5 space-y-4 shadow-2xl animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-start justify-between">
+              <div className="flex items-center gap-2.5 text-rose-400">
+                <div className="p-2 rounded-2xl bg-rose-500/15 border border-rose-500/30">
+                  <AlertTriangle className="w-5 h-5 text-rose-400" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white">Hapus Isian Jurnal / Presensi</h3>
+                  <span className="text-[10px] text-slate-400 block font-semibold">Tindakan Pembimbing</span>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setRecordToDelete(null)}
+                className="p-1.5 rounded-xl bg-slate-800 text-slate-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="bg-slate-950 p-3 rounded-2xl border border-slate-800 space-y-1.5 text-xs">
+              <div className="text-slate-400 text-[11px]">
+                Nama Siswa: <strong className="text-white uppercase">{recordToDelete.studentName}</strong>
+              </div>
+              <div className="text-slate-400 text-[11px]">
+                Tanggal: <strong className="text-amber-400">{formatIndonesianDate(recordToDelete.date)}</strong>
+              </div>
+              <div className="text-slate-400 text-[11px]">
+                Status Tercatat: <strong className="text-cyan-300">{recordToDelete.status}</strong>
+              </div>
+
+              {recordToDelete.journal && (
+                <div className="mt-2 pt-2 border-t border-slate-800/80">
+                  <span className="text-[10px] text-slate-500 block font-semibold mb-1">Cuplikan Jurnal:</span>
+                  <p className="text-[10px] text-slate-300 line-clamp-3 uppercase leading-relaxed italic bg-slate-900/60 p-2 rounded-xl border border-slate-800">
+                    "{recordToDelete.journal}"
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              Setelah dihapus, isian jurnal dan status presensi siswa ini akan dikembalikan menjadi <strong>Belum Absen</strong> sehingga siswa dapat menginput ulang presensinya.
+            </p>
+
+            <div className="grid grid-cols-2 gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setRecordToDelete(null)}
+                className="w-full py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition-all"
+              >
+                Batal
+              </button>
+
+              <button
+                type="button"
+                onClick={handleConfirmDelete}
+                className="w-full py-2.5 px-3 rounded-xl bg-rose-600 hover:bg-rose-500 active:scale-95 text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-lg shadow-rose-600/30 transition-all"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Ya, Hapus Data</span>
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

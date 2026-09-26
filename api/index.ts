@@ -184,6 +184,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return sendJson(200, { success: true, record: newRecord, records: globalState.attendanceRecords });
     }
 
+    // 4b. DELETE /api/attendance
+    if (url.includes('/api/attendance') && method === 'DELETE') {
+      const parts = url.split('/');
+      const id = parts[parts.length - 1];
+      globalState.attendanceRecords = (globalState.attendanceRecords || []).filter((r: any) => r.id !== id);
+      globalState.lastUpdated = new Date().toISOString();
+      return sendJson(200, { success: true, message: 'Presensi/Jurnal dihapus', records: globalState.attendanceRecords });
+    }
+
     // 5. POST /api/clear-all
     if (url.includes('/api/clear-all') && method === 'POST') {
       globalState = { ...EMPTY_DATA, lastUpdated: new Date().toISOString() };

@@ -79,6 +79,7 @@ interface TeMaContextType {
   deleteIndustry: (industryId: string) => Promise<void>;
   saveStudent: (student: Partial<Student> & { name: string; industryId: string; className?: string; classId?: string; departmentName?: string; departmentId?: string }) => Promise<void>;
   deleteStudent: (studentId: string) => Promise<void>;
+  deleteAttendanceRecord: (recordId: string, studentId?: string, date?: string) => Promise<void>;
 
   // System Settings for Administrator
   saveSettings: (settings: Partial<AppSettings>) => Promise<void>;
@@ -342,6 +343,19 @@ export const TeMaProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const date = data.date || getTodayDateString();
     const now = new Date();
     const time = data.time || `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+    // STRICT ANTI-DOUBLE ATTENDANCE CHECK:
+    // If a record already exists for this student on this date, reject duplicate submissions!
+    const existingRecord = (state.attendanceRecords || []).find(
+      r => r.studentId === data.studentId && r.date === date
+    );
+    if (existingRecord) {
+      playWarning();
+      return {
+        success: false,
+        message: 'Presensi untuk hari ini sudah terkirim. Double absensi tidak diperbolehkan. Jika ada kesalahan data, silakan minta Guru Pembimbing untuk menghapus presensi hari ini agar Anda dapat mengisi ulang.',
+      };
+    }
 
     const minLength = state.appSettings.minJournalLength || 200;
     if (data.status === 'Hadir') {
@@ -614,6 +628,26 @@ export const TeMaProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     playDelete();
   };
 
+  const deleteAttendanceRecord = async (recordId: string, studentId?: string, date?: string) => {
+    try {
+      if (recordId && !recordId.startsWith('synth-')) {
+        await fetch(`/api/attendance/${recordId}`, { method: 'DELETE' });
+      }
+    } catch (e) {
+      console.warn(e);
+    }
+
+    const updatedRecords = (state.attendanceRecords || []).filter(r => {
+      if (recordId && r.id === recordId) return false;
+      if (studentId && date && r.studentId === studentId && r.date === date) return false;
+      return true;
+    });
+
+    const newState = { ...state, attendanceRecords: updatedRecords };
+    await pushStateToCloud(newState);
+    playDelete();
+  };
+
   // ==================== SYSTEM SETTINGS (ADMINISTRATOR ONLY) ====================
   const saveSettings = async (newSettings: Partial<AppSettings>) => {
     const updatedSettings = { ...state.appSettings, ...newSettings };
@@ -787,6 +821,7 @@ export const TeMaProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         deleteIndustry,
         saveStudent,
         deleteStudent,
+        deleteAttendanceRecord,
         saveSettings,
         clearAllData,
         loadStarterTemplate,

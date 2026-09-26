@@ -39,9 +39,9 @@ export const MobileFrame: React.FC<Props> = ({ children }) => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 flex items-center justify-center p-0 sm:p-4 text-slate-100 selection:bg-indigo-500 selection:text-white">
-      {/* 9:16 Mobile Canvas Container (Clean, responsive, NO fake phone punch hole / speaker) */}
-      <div className="relative w-full max-w-[420px] aspect-[9/16] max-h-[890px] h-[100dvh] sm:h-[890px] bg-slate-950 sm:rounded-[36px] overflow-hidden shadow-2xl flex flex-col border sm:border-slate-800/80 ring-1 ring-white/5">
+    <div className="min-h-screen bg-slate-950 flex items-center justify-center p-0 sm:p-4 text-slate-100 selection:bg-indigo-500 selection:text-white overflow-x-hidden">
+      {/* 9:16 Mobile Canvas Container (Clean, responsive, NO white borders on mobile) */}
+      <div className="relative w-full max-w-[420px] aspect-[9/16] max-h-[890px] h-[100dvh] sm:h-[890px] bg-slate-950 sm:rounded-[36px] overflow-hidden shadow-2xl flex flex-col border-0 sm:border sm:border-slate-800/80 ring-0 sm:ring-1 sm:ring-white/5 outline-none">
         
         {/* Sleek App Top Bar Header */}
         <header className="bg-slate-900/95 backdrop-blur-md px-3.5 py-3 border-b border-slate-800/80 flex items-center justify-between shrink-0 z-20">

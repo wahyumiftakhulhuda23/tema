@@ -193,6 +193,15 @@ app.post('/api/attendance', (req, res) => {
   res.json({ success: true, record: newRecord, records: db.attendanceRecords });
 });
 
+// Direct DELETE attendance record endpoint
+app.delete('/api/attendance/:id', (req, res) => {
+  const { id } = req.params;
+  const db = readDB();
+  db.attendanceRecords = (db.attendanceRecords || []).filter((r: any) => r.id !== id);
+  writeDB(db);
+  res.json({ success: true, message: 'Presensi/Jurnal berhasil dihapus', records: db.attendanceRecords });
+});
+
 // Direct DELETE student endpoint
 app.delete('/api/students/:id', (req, res) => {
   const { id } = req.params;

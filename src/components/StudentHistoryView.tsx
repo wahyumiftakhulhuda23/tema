@@ -216,7 +216,7 @@ export const StudentHistoryView: React.FC = () => {
 
                       {/* Journal Content */}
                       {record.journal && (
-                        <div className="bg-slate-900 p-2.5 rounded-xl border border-slate-800 space-y-1">
+                        <div className="bg-slate-900 p-2.5 rounded-xl border border-slate-800 space-y-1 min-w-0 max-w-full overflow-hidden">
                           <div className="flex items-center justify-between text-[10px] font-semibold text-slate-400">
                             <span className="flex items-center gap-1 text-cyan-300">
                               <CheckCircle2 className="w-3 h-3" />
@@ -226,7 +226,7 @@ export const StudentHistoryView: React.FC = () => {
                               {record.journal.length} Karakter
                             </span>
                           </div>
-                          <p className="text-[11px] text-slate-200 leading-relaxed whitespace-pre-wrap">
+                          <p className="text-[11px] text-slate-200 leading-relaxed whitespace-pre-wrap break-words break-all [overflow-wrap:anywhere] max-w-full">
                             {record.journal}
                           </p>
                         </div>
@@ -234,9 +234,9 @@ export const StudentHistoryView: React.FC = () => {
 
                       {/* Notes */}
                       {record.notes && record.notes !== record.journal && (
-                        <div className="bg-amber-500/10 p-2 rounded-xl text-[10px] text-amber-300 border border-amber-500/20">
+                        <div className="bg-amber-500/10 p-2 rounded-xl text-[10px] text-amber-300 border border-amber-500/20 min-w-0 max-w-full overflow-hidden">
                           <span className="font-bold block mb-0.5">Catatan:</span>
-                          <p>{record.notes}</p>
+                          <p className="break-words break-all [overflow-wrap:anywhere]">{record.notes}</p>
                         </div>
                       )}
                     </motion.div>
