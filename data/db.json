@@ -1,0 +1,16 @@
+{
+  "departments": [],
+  "classes": [],
+  "industries": [],
+  "students": [],
+  "attendanceRecords": [],
+  "appSettings": {
+    "schoolName": "SMK Negeri 1",
+    "academicYear": "2025/2026",
+    "teacherPasscode": "12345",
+    "adminPasscode": "P4ssw0rd_*",
+    "minJournalLength": 200,
+    "notificationReminderTime": "07:30"
+  },
+  "lastUpdated": "2026-09-26T08:53:50.000Z"
+}

@@ -1,0 +1,8 @@
+{
+  "name": "TeMa - Sistem Informasi Magang & Teaching Factory",
+  "description": "Aplikasi Presensi dan Jurnal Harian Siswa Magang / PKL dan Teaching Factory (TeMa) berbasis mobile 9:16 dengan verifikasi lokasi GPS, jadwal industri otomatis, dan sinkronisasi cloud real-time.",
+  "requestFramePermissions": [
+    "geolocation"
+  ],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
